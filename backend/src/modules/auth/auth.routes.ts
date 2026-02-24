@@ -4,53 +4,16 @@ import { baseResponse } from '../../lib/response.js'
 import { isStrongPassword } from '../../lib/password.js'
 import { prisma } from '../../lib/prisma.js'
 import { generateToken } from '../../lib/jwt.js'
+import { validateBody } from '../../middleware/validate.middleware.js'
+import { loginSchema, signupSchema } from './auth.schema.js'
 
 export const authRoutes = new Hono()
 
-authRoutes.post('/signup', async (c) => {
+authRoutes.post('/signup', validateBody(signupSchema), async (c) => {
     try {
         const body = await c.req.json()
         const { name, email, password, role } = body
 
-        // if there is no any of this values from the body we return early
-        if (!name || !email || !password || !role) {
-            return c.json(
-                baseResponse(false, 'Validation failed', null, [
-                    'All fields are required',
-                ]),
-                400
-            )
-        }
-
-        // regex for the name it shd be only alphabets and spaces
-        if (!/^[A-Za-z\s]+$/.test(name)) {
-            return c.json(
-                baseResponse(false, 'Invalid name', null, [
-                    'Name must contain only alphabets and spaces',
-                ]),
-                400
-            )
-        }
-        // check if hte passowrd is strong and maches the requirments from the docs
-        if (!isStrongPassword(password)) {
-            return c.json(
-                baseResponse(false, 'Weak password', null, [
-                    'Password must be strong',
-                ]),
-                400
-            )
-        }
-
-        // Role validation
-        if (!['author', 'reader'].includes(role)) {
-            return c.json(
-                baseResponse(false, 'Invalid role', null, [
-                    'Role must be author or reader',
-                ]),
-                400
-            )
-        }
-        // check if there is an already exisiting user and if so return early
         const existingUser = await prisma.user.findUnique({
             where: { email },
         })
@@ -94,19 +57,9 @@ authRoutes.post('/signup', async (c) => {
     }
 })
 
-authRoutes.post('/login', async (c) => {
+authRoutes.post('/login', validateBody(loginSchema), async (c) => {
     try {
-        const body = await c.req.json()
-        const { email, password } = body
-
-        if (!email || !password) {
-            return c.json(
-                baseResponse(false, 'Validation failed', null, [
-                    'Email and password are required',
-                ]),
-                400
-            )
-        }
+        const { email, password } = c.get('validatedBody')
 
         const user = await prisma.user.findUnique({
             where: { email },

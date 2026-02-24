@@ -3,6 +3,8 @@ import { prisma } from '../../lib/prisma.js'
 import { baseResponse } from '../../lib/response.js'
 import { authMiddleware, optionalAuth } from '../../middleware/auth.middleware.js'
 import { requireRole } from '../../middleware/role.middleware.js'
+import { validateBody } from '../../middleware/validate.middleware.js'
+import { createArticleSchema, updateArticleSchema } from './article.schema.js'
 
 export const articleRoutes = new Hono()
 
@@ -69,32 +71,13 @@ articleRoutes.get('/', async (c) => {
         Errors: null,
     })
 })
-
-articleRoutes.post('/', authMiddleware, requireRole('author'), async (c) => {
+articleRoutes.post('/', authMiddleware, requireRole('author'), validateBody(createArticleSchema), async (c) => {
     try {
-        const body = await c.req.json()
-        const { title, content, category, status } = body
+
+        const { title, content, category, status } = c.get('validatedBody')
         const user = c.get('user')
 
         const errors: string[] = []
-        if (user.role==='reader'){
-            errors.push('User must me an author to create an article')
-        }
-        if (!title || title.length < 1 || title.length > 150) {
-            errors.push('Title must be between 1 and 150 characters')
-        }
-
-        if (!content || content.length < 50) {
-            errors.push('Content must be at least 50 characters')
-        }
-
-        if (!category) {
-            errors.push('Category is required')
-        }
-
-        if (status && !['Draft', 'Published'].includes(status)) {
-            errors.push('Invalid status')
-        }
 
         if (errors.length > 0) {
             return c.json(
@@ -117,8 +100,8 @@ articleRoutes.post('/', authMiddleware, requireRole('author'), async (c) => {
             baseResponse(true, 'Article created', article),
             201
         )
-    } catch(e) {
-        console.error('Error createing article',e)
+    } catch (e) {
+        console.error('Error createing article', e)
         return c.json(
             baseResponse(false, 'Internal server error', null, [
                 'Something went wrong',
@@ -137,7 +120,7 @@ articleRoutes.get('/me', authMiddleware, requireRole('author'), async (c) => {
 
     // it's optional I am filtering the deleted articles based on a query 
     const where: any = { authorId: user.sub }
-    
+
     if (!includeDeleted) {
         where.deletedAt = null
     }
@@ -162,10 +145,12 @@ articleRoutes.get('/me', authMiddleware, requireRole('author'), async (c) => {
         Errors: null,
     })
 })
-articleRoutes.put('/:id', authMiddleware, requireRole('author'), async (c) => {
+
+articleRoutes.put('/:id', authMiddleware, requireRole('author'), validateBody(updateArticleSchema), async (c) => {
     const id = c.req.param('id')
     const user = c.get('user')
-    const body = await c.req.json()
+    const updates = c.get('validatedBody')
+    const { title, content, category, status } = c.get('validatedBody')
 
     const article = await prisma.article.findUnique({
         where: { id },
@@ -191,14 +176,20 @@ articleRoutes.put('/:id', authMiddleware, requireRole('author'), async (c) => {
             400
         )
     }
-
+    // return early if there is nth to update
+    if (Object.keys(updates).length === 0) {
+        return c.json(
+            baseResponse(false, 'No fields to update', null, ['Provide at least one field to update']),
+            400
+        )
+    }
     const updated = await prisma.article.update({
         where: { id },
         data: {
-            title: body.title ?? article.title,
-            content: body.content ?? article.content,
-            category: body.category ?? article.category,
-            status: body.status ?? article.status,
+            title: title ?? article.title,
+            content: content ?? article.content,
+            category: category ?? article.category,
+            status: status ?? article.status,
         },
     })
 

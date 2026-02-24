@@ -7,4 +7,7 @@ declare module 'hono' {
       role: 'author' | 'reader'
     }
   }
+  interface ContextVariableMap {
+    validatedBody: any
+  }
 }
