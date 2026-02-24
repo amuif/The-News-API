@@ -5,6 +5,7 @@ import { authMiddleware, optionalAuth } from '../../middleware/auth.middleware.j
 import { requireRole } from '../../middleware/role.middleware.js'
 import { validateBody } from '../../middleware/validate.middleware.js'
 import { createArticleSchema, updateArticleSchema } from './article.schema.js'
+import { subSeconds } from 'date-fns'
 
 export const articleRoutes = new Hono()
 
@@ -230,47 +231,79 @@ articleRoutes.delete('/:id', authMiddleware, requireRole('author'), async (c) =>
         200
     )
 })
+
+// Before creating a ReadLog entry:
+
+//      Check if this user has already read this article in the last 30 seconds.
+
+//       If yes → skip logging
+
+//       If no → create ReadLog
+// This prevents refresh spam but still allows real engagement.
+
 articleRoutes.get('/:id', optionalAuth, async (c) => {
-    const id = c.req.param('id')
-    const user = c.get('user')
+  const id = c.req.param('id')
+  const user = c.get('user')
 
-    const article = await prisma.article.findUnique({
-        where: { id },
-        include: {
-            author: {
-                select: {
-                    id: true,
-                    name: true,
-                },
-            },
+  const article = await prisma.article.findUnique({
+    where: { id },
+    include: {
+      author: {
+        select: {
+          id: true,
+          name: true,
         },
-    })
+      },
+    },
+  })
 
-    if (!article || article.deletedAt) {
-        return c.json(
-            baseResponse(false, 'News article no longer available', null, null),
-            404
-        )
-    }
-
-    if (article.status !== 'Published') {
-        return c.json(
-            baseResponse(false, 'News article not available', null, null),
-            404
-        )
-    }
-
-    prisma.readLog.create({
-        data: {
-            articleId: article.id,
-            readerId: user?.sub ?? null,
-        },
-    }).catch((err: any) => {
-        console.error('Failed to log read:', err)
-    })
-
+  if (!article || article.deletedAt) {
     return c.json(
-        baseResponse(true, 'Article retrieved', article),
-        200
+      baseResponse(false, 'News article no longer available', null, null),
+      404
     )
+  }
+
+  if (article.status !== 'Published') {
+    return c.json(
+      baseResponse(false, 'News article not available', null, null),
+      404
+    )
+  }
+
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        if (!user?.sub) return
+
+        const thirtySecondsAgo = subSeconds(new Date(), 30)
+
+        const recentRead = await prisma.readLog.count({
+          where: {
+            articleId: article.id,
+            readerId: user.sub,
+            readAt: {
+              gte: thirtySecondsAgo,
+            },
+          },
+        })
+
+        if (recentRead === 0) {
+          await prisma.readLog.create({
+            data: {
+              articleId: article.id,
+              readerId: user.sub,
+            },
+          })
+        }
+      } catch (err) {
+        console.error('Failed to log read:', err)
+      }
+    })()
+  )
+
+  return c.json(
+    baseResponse(true, 'Article retrieved', article),
+    200
+  )
 })

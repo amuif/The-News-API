@@ -66,7 +66,10 @@ model ReadLog {
   @@index([articleId])
   @@index([readAt])
   @@index([readerId])
+
+  
 }
+
 
 model DailyAnalytics {
   id        String  @id @default(uuid())
